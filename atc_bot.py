@@ -39,11 +39,12 @@ SPECIALTIES = [
 DOCTORS = [
     {"id": 1, "name": "Матвеева Ярослава Дмитриевна",   "spec_id": 3, "spec": "Педиатр",                        "price": 1900, "online": True,  "offline": False, "question": True,  "callback": True,  "link": "https://t.me/yaroslava_matveeva", "clinics": []},  # только онлайн
     {"id": 2, "name": "Гусейнов Эльдар Ражидинович",    "spec_id": 5, "spec": "Терапевт, пульмонолог",          "price": 2000, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/guseynov_eldar",     "clinics": ["4"]},
-    {"id": 3, "name": "Гуркина Мария Викторовна",        "spec_id": 4, "spec": "Реабилитолог, врач ЛФК",         "price": 2100, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/m_v_g_doc",         "clinics": ["4"]},
+    {"id": 3, "name": "Гуркина Мария Викторовна",        "spec_id": 4, "spec": "Реабилитолог, врач ЛФК",         "price": 2100, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/m_v_g_doc",         "clinics": ["3"]},
     {"id": 4, "name": "Торпанов Бронислав Русланович",   "spec_id": 2, "spec": "Нейрохирург",                    "price": 2200, "online": True,  "offline": True, "question": True,  "callback": True,  "link": "https://t.me/bronislauder",      "clinics": ["5"]},
     {"id": 5, "name": "Новиков Артём Сергеевич",         "spec_id": 1, "spec": "Анестезиолог-реаниматолог",      "price": 2300, "online": True,  "offline": False, "question": False, "callback": False, "link": None,                             "clinics": []},
     {"id": 6, "name": "Муравьев Ярослав Эдуардович",    "spec_id": 4, "spec": "Реабилитолог, терапевт",          "price": 2400, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/s_9779",            "clinics": ["3"]},
-    {"id": 7, "name": "Цибулаев Андрей Александрович",  "spec_id": 2, "spec": "Нейрохирург",                    "price": 2500, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/andrey_tcibulaev",  "clinics": ["1", "2", "3"]},
+    {"id": 9, "name": "Муравьев Ярослав Эдуардович",    "spec_id": 5, "spec": "Реабилитолог, терапевт",          "price": 2400, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/s_9779",            "clinics": ["3"]},
+    {"id": 7, "name": "Цибулаев Андрей Александрович",  "spec_id": 2, "spec": "Нейрохирург",                    "price": 2500, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/andrey_tcibulaev",  "clinics": ["3"]},
     {"id": 8, "name": "Дубовой Андрей Владимирович",     "spec_id": 2, "spec": "Нейрохирург",                    "price": 12000,"online": False, "offline": True,  "question": True,  "callback": False, "link": None,                             "clinics": ["4"]},
 ]
 
@@ -216,6 +217,25 @@ PRO Дыхание | Гусейнов Э.Р. (https://t.me/guseinov)""",
 — онлайн-консультации
 — Еомед клиника (Ялта, Севастополь)
 — АТС клиника (Москва)""",
+    9: """👨‍⚕️Муравьев Ярослав Эдуардович
+
+Специальность: врач-терапевт, кардиолог, врач физической и реабилитационной медицины
+
+✍️Коротко о практике:
+— опыт работы: 13 лет
+— квалификация: врач высшей категории
+
+Основные направления:
+✔️Чек-ап организма
+✔️Подбор терапии при хронических заболеваниях
+✔️Кардиология, гипертоническая болезнь
+✔️Соматическая реабилитация в стационаре
+
+❓Где принимает врач:
+— онлайн-консультации
+— АТС клиника (Москва)
+
+💬Написать врачу (https://t.me/s_9779)""",
     8: """👨‍⚕️Дубовой Андрей Владимирович
 
 Специальность: нейрохирург
