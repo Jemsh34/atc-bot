@@ -537,16 +537,12 @@ async def handle_doctor(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["doctor"] = doctor
 
-    # Показываем карточку врача с кнопками действий
     visit_type = context.user_data.get("visit_type")
+    doc_id = doctor["id"]
     price = doctor["price"]
 
-    text = (
-        f"👨‍⚕️ <b>{doctor['name']}</b>\n"
-        f"🩺 {doctor['spec']}\n"
-        f"💰 Стоимость онлайн-консультации: <b>{price} ₽</b>\n\n"
-        f"Выберите действие:"
-    )
+    card = DOCTOR_CARDS.get(doc_id, f"{doctor['name']}\n{doctor['spec']}")
+    text = card + f"\n\n💰 <b>Стоимость консультации: {price} ₽</b>\n\nВыберите действие:"
 
     actions = []
     if visit_type == "online" and doctor["online"]:
