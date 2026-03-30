@@ -1,258 +1,158 @@
 import logging
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
+import gspread
+from google.oauth2.service_account import Credentials
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes, ConversationHandler
 )
 
 # ========================
-# НАСТРОЙКИ
-# ========================
-BOT_TOKEN = "8442363087:AAFGqS2UtqfF_H9sFVUFMy6lMv28rJ739Gc"
-ADMIN_GROUP_ID = -5228416685
-
-# ========================
-# ДАННЫЕ ИЗ ТАБЛИЦ
+# НАСТРОЙКИ ПОДКЛЮЧЕНИЯ
 # ========================
 
-CITIES = ["Москва", "Ялта", "Севастополь"]
+# ID вашей Google Таблицы — берётся из ссылки:
+# https://docs.google.com/spreadsheets/d/  ВОТ_ЭТОТ_ID  /edit
+SPREADSHEET_ID = "1CxGkQAFbCnk3QO00zQr-HQyW95heLoVBDpmlccGXnJY"
 
-CLINICS = {
-    "Ялта": [("1", "Еомед клиника", "Республика Крым, г. Ялта, ул. Прибрежная, д.17")],
-    "Севастополь": [("2", "Еомед клиника", "Республика Крым г. Севастополь, пр-кт Октябрьской революции 48")],
-    "Москва": [
-        ("3", "АТС клиника", "МО, городской округ Красногорск, пос. Ильинское-Усово, ул. Заповедная, 21"),
-        ("4", "Ильинская больница", "МО, городской округ Красногорск, дер. Глухово, ул. Рублёвское предместье, 2/2"),
-        ("5", "НИИ Реабилитологии ФНКЦ РР", "Москва, ул. Иваньковское шоссе, д. 3"),
-    ],
-}
+# Путь к JSON-файлу сервисного аккаунта Google (лежит рядом с ботом)
+SERVICE_ACCOUNT_FILE = "service_account.json"
 
-SPECIALTIES = [
-    (1, "Анестезиология и реаниматология"),
-    (2, "Неврология и нейрохирургия"),
-    (3, "Педиатрия"),
-    (4, "Реабилитация и восстановление"),
-    (5, "Терапия"),
-]
+# ========================
+# ЗАГРУЗКА ДАННЫХ ИЗ GOOGLE SHEETS
+# ========================
 
-# Врачи: id, имя, specialty_id, цена онлайн, онлайн, офлайн, вопрос, обратный звонок, ссылка
-DOCTORS = [
-    {"id": 1, "name": "Матвеева Ярослава Дмитриевна",   "spec_id": 3, "spec": "Педиатр",                        "price": 1900, "online": True,  "offline": False, "question": True,  "callback": True,  "link": "https://t.me/yaroslava_matveeva", "clinics": []},  # только онлайн
-    {"id": 2, "name": "Гусейнов Эльдар Ражидинович",    "spec_id": 5, "spec": "Терапевт, пульмонолог",          "price": 2000, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/guseynov_eldar",     "clinics": ["4"]},
-    {"id": 3, "name": "Гуркина Мария Викторовна",        "spec_id": 4, "spec": "Реабилитолог, врач ЛФК",         "price": 2100, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/m_v_g_doc",         "clinics": ["3"]},
-    {"id": 4, "name": "Торпанов Бронислав Русланович",   "spec_id": 2, "spec": "Нейрохирург",                    "price": 2200, "online": True,  "offline": True, "question": True,  "callback": True,  "link": "https://t.me/bronislauder",      "clinics": ["5"]},
-    {"id": 5, "name": "Новиков Артём Сергеевич",         "spec_id": 1, "spec": "Анестезиолог-реаниматолог",      "price": 2300, "online": True,  "offline": False, "question": False, "callback": False, "link": None,                             "clinics": []},
-    {"id": 6, "name": "Муравьев Ярослав Эдуардович",    "spec_id": 4, "spec": "Реабилитолог, терапевт",          "price": 2400, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/s_9779",            "clinics": ["3"]},
-    {"id": 9, "name": "Муравьев Ярослав Эдуардович",    "spec_id": 5, "spec": "Реабилитолог, терапевт",          "price": 2400, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/s_9779",            "clinics": ["3"]},
-    {"id": 7, "name": "Цибулаев Андрей Александрович",  "spec_id": 2, "spec": "Нейрохирург",                    "price": 2500, "online": True,  "offline": True,  "question": True,  "callback": True,  "link": "https://t.me/andrey_tcibulaev",  "clinics": ["3"]},
-    {"id": 8, "name": "Дубовой Андрей Владимирович",     "spec_id": 2, "spec": "Нейрохирург",                    "price": 12000,"online": False, "offline": True,  "question": True,  "callback": False, "link": None,                             "clinics": ["4"]},
-]
+def get_sheet_client():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ]
+    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+    return gspread.authorize(creds)
 
-SPEC_ID_TO_NAME = {s[0]: s[1] for s in SPECIALTIES}
 
-DOCTOR_CARDS = {
-    1: """👶Матвеева Ярослава Дмитриевна 
+def parse_bool(val):
+    """Конвертирует любое представление булева значения из таблицы."""
+    return str(val).strip().lower() in ("true", "да", "1", "yes")
 
-Специальность: педиатрия, детские инфекции 
 
-✍️Коротко о практике:
-— опыт работы:  с 2008 года 
+def parse_spec_ids(val):
+    """
+    Парсит поле specialty_id, которое может содержать одно или несколько
+    направлений, разделённых точкой: '5.4' → [5, 4], '2' → [2].
+    """
+    if val is None or str(val).strip() == "":
+        return []
+    return [int(float(x)) for x in str(val).split(".") if x.strip()]
 
-— основные направления: педиатрия ( вакцинация, ведение детей от рождения и до 17 лет включительно по острым и хроническим заболеваниям) 
 
-— чаще всего ко мне обращаются с вопросами:
-✔️ Составления индивидуальных графиков иммунизация (прививок) детей разных возрастов, в том числе детей с особенностями здоровья , 
-✔️подбор тактики ведения пациентов с особенностями здоровья, 
-✔️Лечение хронических инфекционных заболеваний,   и профилактика обострений 
-✔️Консультации Беременных ( 1, 2, 3 триместр) 
-✔️Составление плана обследований , когда врачи "на месте" разводят руками
-✔️И много ещё в каких ситуациях
+def load_data_from_sheets():
+    """
+    Загружает все данные из Google Таблицы.
 
-❓Где принимает врач:
-— онлайн-консультации
+    Листы и их структура:
+      настройки   : Параметр | Значение | Описание
+      города      : id | name | is_active
+      клиники     : id | city_id | name | address | is_active
+      направления : id | name | sort_order | is_active
+      врачи       : id | full_name | specialty_id | price | is_online | is_offline |
+                    is_question | is_callback | telegram_link | is_active | card_text
+      врач-клиника: id | doctor_id | clinic_id | is_active | Примечание
+    """
+    client      = get_sheet_client()
+    spreadsheet = client.open_by_key(SPREADSHEET_ID)
 
-Написать врачу (https://t.me/yaroslava_matveeva)""",
-    2: """👨‍⚕️Гусейнов Эльдар Ражидинович
+    # --- настройки ---
+    rows     = spreadsheet.worksheet("настройки").get_all_records()
+    settings = {r["Параметр"]: r["Значение"] for r in rows}
 
-Специальность: врач-пульмонолог, врач-терапевт
+    # --- города ---
+    rows   = spreadsheet.worksheet("города").get_all_records()
+    cities = [
+        {"id": int(r["id"]), "name": r["name"]}
+        for r in rows if parse_bool(r.get("is_active"))
+    ]
 
-Коротко о практике: 
-- опыт работы: 16 лет 
+    # --- клиники ---
+    rows    = spreadsheet.worksheet("клиники").get_all_records()
+    clinics = [
+        {
+            "id":      int(r["id"]),
+            "city_id": int(r["city_id"]),
+            "name":    r["name"],
+            "address": r["address"],
+        }
+        for r in rows if parse_bool(r.get("is_active"))
+    ]
 
-- основные направления:
-Лечение заболеваний:
-✔️острый и хронический бронхит,
-✔️хроническая обструктивная болезнь легких (хронический бронхит курильщика), 
-✔️бронхиальная астма, 
-✔️саркоидоз, 
-✔️пневмония, 
-✔️бронхоэктатическая болезнь, 
-✔️бронхиолит,
-✔️эмфизема легких. 
+    # --- направления (специальности), сортируем по sort_order ---
+    rows        = spreadsheet.worksheet("направления").get_all_records()
+    specialties = sorted(
+        [
+            {
+                "id":   int(r["id"]),
+                "name": r["name"],
+                "sort": int(r.get("sort_order") or 99),
+            }
+            for r in rows if parse_bool(r.get("is_active"))
+        ],
+        key=lambda x: x["sort"]
+    )
 
-С какими симптомами обращаются к пульмонологу: 
-✔️сухой или влажный кашель, 
-✔️длительный кашель, 
-✔️одышка и чувство нехватки воздуха, 
-✔️увство неполного вдоха, 
-✔️частая заболеваемость бронхитами, 
-✔️боль в грудной клетке и т.д.
+    # --- врачи ---
+    # specialty_id может быть '5.4' — врач относится сразу к направлениям 5 и 4
+    rows    = spreadsheet.worksheet("врачи").get_all_records()
+    doctors = [
+        {
+            "id":       int(r["id"]),
+            "name":     r["full_name"],
+            "spec_ids": parse_spec_ids(r.get("specialty_id")),
+            "price":    int(r["price"]),
+            "online":   parse_bool(r.get("is_online")),
+            "offline":  parse_bool(r.get("is_offline")),
+            "question": parse_bool(r.get("is_question")),
+            "callback": parse_bool(r.get("is_callback")),
+            "link":     r.get("telegram_link") or None,
+            "card":     r.get("card_text", ""),
+            "clinics":  [],  # заполняется ниже из листа врач-клиника
+        }
+        for r in rows
+        if r.get("id") and parse_bool(r.get("is_active"))
+    ]
 
-❓Где принимает врач:
--Ильинская больница (https://ihospital.ru/) 
+    # --- врач-клиника (many-to-many) ---
+    rows         = spreadsheet.worksheet("врач-клиника").get_all_records()
+    doctor_by_id = {d["id"]: d for d in doctors}
+    for r in rows:
+        if not parse_bool(r.get("is_active")):
+            continue
+        doc_id    = int(r["doctor_id"])
+        clinic_id = int(r["clinic_id"])
+        if doc_id in doctor_by_id:
+            doctor_by_id[doc_id]["clinics"].append(clinic_id)
 
-💬Написать врачу (https://t.me/guseynov_eldar)
-PRO Дыхание | Гусейнов Э.Р. (https://t.me/guseinov)""",
-    3: """👩‍⚕️Гуркина Мария Викторовна
+    return {
+        "settings":    settings,
+        "cities":      cities,
+        "clinics":     clinics,
+        "specialties": specialties,
+        "doctors":     doctors,
+    }
 
-Специальность: врач физической и реабилитационной медицины, врач по лечебной физкультуре (ЛФК)
 
-✍️Коротко о практике:
-— опыт работы: 19 лет
+# Глобальный кэш — загружается при старте, обновляется по /reload
+_CACHE = {}
 
-— основные направления: комплексная реабилитация пациентов на всех этапах
+def reload_data():
+    global _CACHE
+    _CACHE = load_data_from_sheets()
+    logging.info("✅ Данные из Google Sheets загружены")
 
-— чаще всего ко мне обращаются с вопросами:
-✔️где пройти реабилитацию в Москве;
-как попасть на реабилитацию;
+def get(key):
+    return _CACHE.get(key, [])
 
-✔️что входит в реабилитационное лечение;
-
-✔️можно ли проводить реабилитацию при наличии в анамнезе онкологического заболевания;
-
-✔️когда надо начинать реабилитационное лечение.
-
-❓Где принимает врач:
-— онлайн-консультации
- 
-💬Написать врачу (https://t.me/m_v_g_doc)""",
-    4: """👨‍⚕️Торпанов Бронислав Русланович 
-
-Специальность: нейрохирург 
-
-✍️Коротко о практике:
-— опыт работы: 7 лет
-
-Основные направления: 
-✔️хирургическое лечение боли (тройничная невралгия, языкоглоточная, посттравматическая боль и дефицит)
-
-✔️двигательные расстройства (нейромодуляция) 
-
-✔️установка различных систем доставки: тока,лекарственных препаратов в нервную систему.
-
-Чаще всего ко мне обращаются с вопросами:
-✔️Помогите болит, все лекарства перепробовал, доктор нога не шевелиться, не чувствует, доктор сковывает, трясёт и т.д.
-
-❓Где принимает врач:
-— онлайн-консультации
-— город Москва, ул Гоголя 34а, (АТС Клиника)
-- НИИ Реабилитологии ФНКЦ РР
-
-Подробнее о враче (навигация):
-#паркинсон #эпилепсия
-#двигательныерасстпойства #нейрохирургия 
-#истории_пациентов
-
-💬Написать врачу (https://t.me/bronislauder)""",
-    5: """👨‍⚕️Новиков Артём Сергеевич
-
-Специальность: анестезиолог-реаниматолог 
-
-✍️Коротко о практике:
-— опыт работы: 18 лет
-
-— основные направления: анестезиология и интенсивная терапия критических состояний в многопрофильном стационаре
-
-— чаще всего ко мне обращаются с вопросами:
-- будет ли больно во время и после процедуры
-- что такое наркоз и чем он отличается от анестезии
-- какой вид анестезии подходит в конкретной ситуации
--  насколько безопасна анестезия
-- зачем пациента переводят в реанимацию
-- что происходит в отделении реанимации и интенсивной терапии
-
-❓Где принимает врач:
-— онлайн-консультации
-
-Подробнее о враче (навигация):
-#отзывы
-#истории_пациентов
-
-💬Написать врачу Артём""",
-    6: """👶Муравьев Ярослав Эдуардович
-
-Специальность: врач-терапевт, врач-кардиолог, врач физической и реабилитационной медицины
-
-✍️Коротко о практике:
-— опыт работы: 11 лет
-
-— основные направления: Чек-ап организма, подбор терапии при хронических заболеваниях, соматическая реабилитация (в стационаре)
-
-— чаще всего ко мне обращаются с вопросами:
-✔️ Проведение полного комплексного обследования (Check-up)
-✔️ Обследование с целью исключения онкопатологии
-✔️ Подбор терапии при хронических заболеваниях (гипертоническая болезнь и др.)
-✔️ Реабилитация в стационаре (по ОМС и на платной основе)
-
-❓Где принимает врач:
-— онлайн-консультации
-
-Написать врачу (https://t.me/s_9779.)""",
-    7: """👨‍⚕️Цибулаев Андрей Александрович
-
-Специальность: нейрохирург
-
-✍️Коротко о практике:
-— опыт работы: 14 лет
-— квалификация: врач высшей категории
-
-Основные направления:
-✔️Врождённые и приобретённые заболевания нервной системы
-✔️Последствия травм головного и спинного мозга
-✔️Невралгия тройничного нерва
-✔️Остеохондрозы, грыжи межпозвонковых дисков
-✔️Полиневриты, невриты
-
-❓Где принимает врач:
-— онлайн-консультации
-— Еомед клиника (Ялта, Севастополь)
-— АТС клиника (Москва)""",
-    9: """👨‍⚕️Муравьев Ярослав Эдуардович
-
-Специальность: врач-терапевт, кардиолог, врач физической и реабилитационной медицины
-
-✍️Коротко о практике:
-— опыт работы: 13 лет
-— квалификация: врач высшей категории
-
-Основные направления:
-✔️Чек-ап организма
-✔️Подбор терапии при хронических заболеваниях
-✔️Кардиология, гипертоническая болезнь
-✔️Соматическая реабилитация в стационаре
-
-❓Где принимает врач:
-— онлайн-консультации
-— АТС клиника (Москва)
-
-💬Написать врачу (https://t.me/s_9779)""",
-    8: """👨‍⚕️Дубовой Андрей Владимирович
-
-Специальность: нейрохирург
-
-✍️Коротко о практике:
-— опыт работы: 25 лет
-— квалификация: врач высшей категории
-
-Основные направления:
-✔️Нейрохирургия — сосудистая и спинальная
-✔️Лечение грыж межпозвонковых дисков
-✔️Опухоли головного и спинного мозга
-
-❓Где принимает врач:
-— Ильинская больница (г. Москва)""",
-}
-
+def get_settings():
+    return _CACHE.get("settings", {})
 
 
 # ========================
@@ -282,7 +182,6 @@ logging.basicConfig(level=logging.INFO)
 # ========================
 
 async def delete_last(context, chat_id):
-    """Удаляет предыдущее сообщение бота"""
     msg_id = context.user_data.get("last_bot_msg")
     if msg_id:
         try:
@@ -291,53 +190,38 @@ async def delete_last(context, chat_id):
             pass
 
 async def send_and_save(update, context, text, keyboard, parse_mode=None):
-    """Отправляет сообщение и сохраняет его ID, удаляя предыдущее"""
     chat_id = update.effective_chat.id
     await delete_last(context, chat_id)
-    
-    # Удаляем сообщение пользователя
     try:
         await update.message.delete()
     except Exception:
         pass
-
     kwargs = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
     if parse_mode:
         kwargs["parse_mode"] = parse_mode
-    
     sent = await context.bot.send_message(**kwargs)
     context.user_data["last_bot_msg"] = sent.message_id
     return sent
 
 def make_inline(rows):
-    """Создаёт инлайн клавиатуру из списка [(text, callback_data)]"""
-    keyboard = [[InlineKeyboardButton(t, callback_data=d)] for t, d in rows]
-    return InlineKeyboardMarkup(keyboard)
+    return InlineKeyboardMarkup([[InlineKeyboardButton(t, callback_data=d)] for t, d in rows])
 
-def make_inline_cols(items, cols=2):
-    """Создаёт инлайн клавиатуру в несколько колонок"""
+def make_inline_cols(items, cols=1):
     buttons = [InlineKeyboardButton(t, callback_data=d) for t, d in items]
-    rows = [buttons[i:i+cols] for i in range(0, len(buttons), cols)]
+    rows    = [buttons[i:i+cols] for i in range(0, len(buttons), cols)]
     rows.append([
         InlineKeyboardButton("◀️ Назад", callback_data="back"),
         InlineKeyboardButton("🏠 Главное меню", callback_data="home"),
     ])
     return InlineKeyboardMarkup(rows)
 
-def nav_keyboard(extra=None):
-    """Навигационная клавиатура с кнопками назад/домой"""
-    row = [
+def nav_keyboard():
+    return InlineKeyboardMarkup([[
         InlineKeyboardButton("◀️ Назад", callback_data="back"),
         InlineKeyboardButton("🏠 Главное меню", callback_data="home"),
-    ]
-    buttons = []
-    if extra:
-        buttons.append([InlineKeyboardButton(t, callback_data=d) for t, d in extra])
-    buttons.append(row)
-    return InlineKeyboardMarkup(buttons)
+    ]])
 
 async def edit_or_send(update, context, text, keyboard, parse_mode=None):
-    """Редактирует текущее сообщение или отправляет новое"""
     query = update.callback_query
     if query:
         await query.answer()
@@ -350,7 +234,6 @@ async def edit_or_send(update, context, text, keyboard, parse_mode=None):
             return
         except Exception:
             pass
-    # fallback — отправляем новое
     chat_id = update.effective_chat.id
     await delete_last(context, chat_id)
     kwargs = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
@@ -365,124 +248,87 @@ async def edit_or_send(update, context, text, keyboard, parse_mode=None):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    
-    # Удаляем стартовую команду пользователя
     try:
         await update.message.delete()
     except Exception:
         pass
 
-    text = (
-        "👋 Добро пожаловать в АТС Клинику!\n\n"
-        "Я помогу вам записаться к врачу или ответить на вопросы.\n\n"
-        "Выберите тип приёма:"
-    )
+    welcome  = get_settings().get("WELCOME_TEXT", "👋 Добро пожаловать!\n\nВыберите тип приёма:")
     keyboard = make_inline([
         ("🖥 Онлайн консультация", "type_online"),
-        ("🏥 Запись в клинику", "type_offline"),
+        ("🏥 Запись в клинику",    "type_offline"),
         ("💬 Задать вопрос врачу", "type_question"),
-        ("📞 Обратный звонок", "type_callback"),
+        ("📞 Обратный звонок",     "type_callback"),
     ])
-    chat_id = update.effective_chat.id
-    sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+    sent = await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=welcome, reply_markup=keyboard
+    )
     context.user_data["last_bot_msg"] = sent.message_id
     return MAIN_MENU
 
+
 async def show_main_menu(update, context):
-    text = "🏠 Главное меню\n\nВыберите тип приёма:"
     keyboard = make_inline([
         ("🖥 Онлайн консультация", "type_online"),
-        ("🏥 Запись в клинику", "type_offline"),
+        ("🏥 Запись в клинику",    "type_offline"),
         ("💬 Задать вопрос врачу", "type_question"),
-        ("📞 Обратный звонок", "type_callback"),
+        ("📞 Обратный звонок",     "type_callback"),
     ])
-    await edit_or_send(update, context, text, keyboard)
+    await edit_or_send(update, context, "🏠 Главное меню\n\nВыберите тип приёма:", keyboard)
     return MAIN_MENU
 
+
+async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /reload — перезагружает данные из таблицы."""
+    try:
+        reload_data()
+        await update.message.reply_text("✅ Данные из Google Sheets успешно обновлены!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка загрузки данных:\n{e}")
+
 # ========================
-# ВЫБОР ТИПА
+# ВЫБОР ТИПА ПРИЁМА
 # ========================
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
         return await show_main_menu(update, context)
 
     if data == "type_online":
-        context.user_data["visit_type"] = "online"
+        context.user_data["visit_type"]  = "online"
         context.user_data["visit_label"] = "Онлайн консультация"
         return await show_specialties(update, context)
-
     elif data == "type_offline":
-        context.user_data["visit_type"] = "offline"
+        context.user_data["visit_type"]  = "offline"
         context.user_data["visit_label"] = "Запись в клинику"
         return await show_cities(update, context)
-
     elif data == "type_question":
         context.user_data["visit_type"] = "question"
         return await show_specialties_for_question(update, context)
-
     elif data == "type_callback":
         context.user_data["visit_type"] = "callback"
         return await show_specialties_for_callback(update, context)
 
 # ========================
-# ОНЛАЙН — СПЕЦИАЛЬНОСТИ
-# ========================
-
-async def show_specialties(update, context):
-    visit_type = context.user_data.get("visit_type")
-    
-    # Фильтруем специальности по доступным врачам
-    available_spec_ids = set()
-    for d in DOCTORS:
-        if visit_type == "online" and d["online"]:
-            available_spec_ids.add(d["spec_id"])
-        elif visit_type == "offline" and d["offline"]:
-            available_spec_ids.add(d["spec_id"])
-
-    items = [(name, f"spec_{sid}") for sid, name in SPECIALTIES if sid in available_spec_ids]
-    keyboard = make_inline_cols(items, cols=1)
-    await edit_or_send(update, context, "🩺 Выберите специализацию:", keyboard)
-    return CHOOSE_SPECIALTY
-
-async def handle_specialty(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "home":
-        context.user_data.clear()
-        return await show_main_menu(update, context)
-    if data == "back":
-        visit_type = context.user_data.get("visit_type")
-        if visit_type == "offline":
-            return await show_clinics(update, context)
-        return await show_main_menu(update, context)
-
-    spec_id = int(data.replace("spec_", ""))
-    context.user_data["spec_id"] = spec_id
-    context.user_data["spec_name"] = SPEC_ID_TO_NAME.get(spec_id, "")
-    return await show_doctors(update, context)
-
-# ========================
-# ОФЛАЙН — ГОРОДА / КЛИНИКИ
+# ГОРОДА / КЛИНИКИ (офлайн)
 # ========================
 
 async def show_cities(update, context):
-    items = [(c, f"city_{c}") for c in CITIES]
-    keyboard = make_inline_cols(items, cols=1)
+    items    = [(c["name"], f"city_{c['id']}") for c in get("cities")]
+    keyboard = make_inline_cols(items)
     await edit_or_send(update, context, "🌆 Выберите город:", keyboard)
     return CHOOSE_CITY
+
 
 async def handle_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
@@ -490,22 +336,30 @@ async def handle_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "back":
         return await show_main_menu(update, context)
 
-    city = data.replace("city_", "")
-    context.user_data["city"] = city
+    city_id = int(data.replace("city_", ""))
+    city    = next((c for c in get("cities") if c["id"] == city_id), None)
+    context.user_data["city_id"]   = city_id
+    context.user_data["city_name"] = city["name"] if city else ""
     return await show_clinics(update, context)
 
+
 async def show_clinics(update, context):
-    city = context.user_data.get("city", "")
-    clinics = CLINICS.get(city, [])
-    items = [(name, f"clinic_{cid}") for cid, name, _ in clinics]
-    keyboard = make_inline_cols(items, cols=1)
-    await edit_or_send(update, context, f"🏥 Город: {city}\n\nВыберите клинику:", keyboard)
+    city_id  = context.user_data.get("city_id")
+    clinics  = [c for c in get("clinics") if c["city_id"] == city_id]
+    items    = [(c["name"], f"clinic_{c['id']}") for c in clinics]
+    keyboard = make_inline_cols(items)
+    await edit_or_send(
+        update, context,
+        f"🏥 Город: {context.user_data.get('city_name', '')}\n\nВыберите клинику:",
+        keyboard
+    )
     return CHOOSE_CLINIC
+
 
 async def handle_clinic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
@@ -513,28 +367,74 @@ async def handle_clinic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "back":
         return await show_cities(update, context)
 
-    clinic_id = data.replace("clinic_", "")
-    city = context.user_data.get("city", "")
-    for cid, name, addr in CLINICS.get(city, []):
-        if cid == clinic_id:
-            context.user_data["clinic_id"] = cid
-            context.user_data["clinic_name"] = name
-            context.user_data["clinic_addr"] = addr
-            break
+    clinic_id = int(data.replace("clinic_", ""))
+    clinic    = next((c for c in get("clinics") if c["id"] == clinic_id), None)
+    if clinic:
+        context.user_data["clinic_id"]   = clinic_id
+        context.user_data["clinic_name"] = clinic["name"]
+        context.user_data["clinic_addr"] = clinic["address"]
     return await show_specialties(update, context)
 
 # ========================
-# СПИСОК ВРАЧЕЙ
+# СПЕЦИАЛЬНОСТИ
+# ========================
+
+def _available_specialties(visit_type, clinic_id=None):
+    """Возвращает направления, по которым есть подходящие врачи."""
+    available_spec_ids = set()
+    for d in get("doctors"):
+        if visit_type == "online" and not d["online"]:
+            continue
+        if visit_type == "offline":
+            if not d["offline"]:
+                continue
+            if clinic_id and clinic_id not in d["clinics"]:
+                continue
+        available_spec_ids.update(d["spec_ids"])
+    return [s for s in get("specialties") if s["id"] in available_spec_ids]
+
+
+async def show_specialties(update, context):
+    visit_type = context.user_data.get("visit_type")
+    clinic_id  = context.user_data.get("clinic_id")
+    specs      = _available_specialties(visit_type, clinic_id)
+    items      = [(s["name"], f"spec_{s['id']}") for s in specs]
+    keyboard   = make_inline_cols(items)
+    await edit_or_send(update, context, "🩺 Выберите специализацию:", keyboard)
+    return CHOOSE_SPECIALTY
+
+
+async def handle_specialty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data  = query.data
+
+    if data == "home":
+        context.user_data.clear()
+        return await show_main_menu(update, context)
+    if data == "back":
+        if context.user_data.get("visit_type") == "offline":
+            return await show_clinics(update, context)
+        return await show_main_menu(update, context)
+
+    spec_id  = int(data.replace("spec_", ""))
+    spec     = next((s for s in get("specialties") if s["id"] == spec_id), None)
+    context.user_data["spec_id"]   = spec_id
+    context.user_data["spec_name"] = spec["name"] if spec else ""
+    return await show_doctors(update, context)
+
+# ========================
+# ВРАЧИ
 # ========================
 
 async def show_doctors(update, context):
     visit_type = context.user_data.get("visit_type")
-    spec_id = context.user_data.get("spec_id")
-    clinic_id = context.user_data.get("clinic_id")
+    spec_id    = context.user_data.get("spec_id")
+    clinic_id  = context.user_data.get("clinic_id")
 
     filtered = []
-    for d in DOCTORS:
-        if d["spec_id"] != spec_id:
+    for d in get("doctors"):
+        if spec_id not in d["spec_ids"]:
             continue
         if visit_type == "online" and not d["online"]:
             continue
@@ -546,20 +446,27 @@ async def show_doctors(update, context):
         filtered.append(d)
 
     if not filtered:
-        keyboard = nav_keyboard()
-        await edit_or_send(update, context, "😔 В данной специализации нет доступных врачей.\n\nВыберите другую специализацию.", keyboard)
+        await edit_or_send(
+            update, context,
+            "😔 В данной специализации нет доступных врачей.\n\nВыберите другую.",
+            nav_keyboard()
+        )
         return CHOOSE_SPECIALTY
 
-    items = [(f"👨‍⚕️ {d['name']}", f"doc_{d['id']}") for d in filtered]
-    keyboard = make_inline_cols(items, cols=1)
-    spec_name = context.user_data.get("spec_name", "")
-    await edit_or_send(update, context, f"🩺 {spec_name}\n\nВыберите врача:", keyboard)
+    items    = [(f"👨‍⚕️ {d['name']}", f"doc_{d['id']}") for d in filtered]
+    keyboard = make_inline_cols(items)
+    await edit_or_send(
+        update, context,
+        f"🩺 {context.user_data.get('spec_name', '')}\n\nВыберите врача:",
+        keyboard
+    )
     return CHOOSE_DOCTOR
+
 
 async def handle_doctor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
@@ -568,31 +475,28 @@ async def handle_doctor(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_specialties(update, context)
 
     doc_id = int(data.replace("doc_", ""))
-    doctor = next((d for d in DOCTORS if d["id"] == doc_id), None)
+    doctor = next((d for d in get("doctors") if d["id"] == doc_id), None)
     if not doctor:
         return CHOOSE_DOCTOR
 
     context.user_data["doctor"] = doctor
-
     visit_type = context.user_data.get("visit_type")
-    doc_id = doctor["id"]
-    price = doctor["price"]
 
-    card = DOCTOR_CARDS.get(doc_id, f"{doctor['name']}\n{doctor['spec']}")
-    text = card + f"\n\n💰 <b>Стоимость консультации: {price} ₽</b>\n\nВыберите действие:"
+    card = doctor["card"] or doctor["name"]
+    text = card + f"\n\n💰 <b>Стоимость консультации: {doctor['price']} ₽</b>\n\nВыберите действие:"
 
     actions = []
-    if visit_type == "online" and doctor["online"]:
+    if visit_type == "online"  and doctor["online"]:
         actions.append(("📅 Записаться на консультацию", "action_book"))
     if visit_type == "offline" and doctor["offline"]:
         actions.append(("📅 Записаться в клинику", "action_book"))
     if doctor["link"]:
-        actions.append((f"💬 Написать врачу", "action_write"))
+        actions.append(("💬 Написать врачу", "action_write"))
+    actions += [("◀️ Назад", "back"), ("🏠 Главное меню", "home")]
 
-    actions.append(("◀️ Назад", "back"))
-    actions.append(("🏠 Главное меню", "home"))
-
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(t, callback_data=d)] for t, d in actions])
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(t, callback_data=d)] for t, d in actions]
+    )
     await edit_or_send(update, context, text, keyboard, parse_mode="HTML")
     return CHOOSE_ACTION
 
@@ -603,7 +507,7 @@ async def handle_doctor(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
@@ -614,14 +518,15 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doctor = context.user_data.get("doctor", {})
 
     if data == "action_write":
-        link = doctor.get("link")
-        keyboard = nav_keyboard()
-        await edit_or_send(update, context, f"💬 Напишите врачу напрямую:\n{link}", keyboard)
+        await edit_or_send(
+            update, context,
+            f"💬 Напишите врачу напрямую:\n{doctor.get('link')}",
+            nav_keyboard()
+        )
         return CHOOSE_ACTION
 
     if data == "action_book":
-        keyboard = nav_keyboard()
-        await edit_or_send(update, context, "📝 Введите ваше ФИО:", keyboard)
+        await edit_or_send(update, context, "📝 Введите ваше ФИО:", nav_keyboard())
         return COLLECT_NAME
 
 # ========================
@@ -639,10 +544,10 @@ async def collect_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await handle_doctor(update, context)
         return COLLECT_NAME
 
-    name = update.message.text.strip()
-    context.user_data["patient_name"] = name
+    context.user_data["patient_name"] = update.message.text.strip()
     await send_and_save(update, context, "📱 Введите ваш номер телефона:", nav_keyboard())
     return COLLECT_PHONE
+
 
 async def collect_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
@@ -660,6 +565,7 @@ async def collect_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_and_save(update, context, "🎂 Введите дату рождения (например: 15.03.1990):", nav_keyboard())
     return COLLECT_BIRTH
 
+
 async def collect_birth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -673,8 +579,13 @@ async def collect_birth(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return COLLECT_BIRTH
 
     context.user_data["birth"] = update.message.text.strip()
-    await send_and_save(update, context, "📅 Укажите удобную дату и время (например: 10.04.2025 в 14:00):", nav_keyboard())
+    await send_and_save(
+        update, context,
+        "📅 Укажите удобную дату и время (например: 10.04.2025 в 14:00):",
+        nav_keyboard()
+    )
     return COLLECT_DATETIME
+
 
 async def collect_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
@@ -691,18 +602,15 @@ async def collect_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["appt_datetime"] = update.message.text.strip()
     return await show_confirm(update, context)
 
-async def show_confirm(update, context):
-    d = context.user_data
-    doctor = d.get("doctor", {})
-    visit_label = d.get("visit_label", "")
-    city = d.get("city", "Онлайн")
-    clinic = d.get("clinic_name", "Онлайн")
 
-    text = (
+async def show_confirm(update, context):
+    d      = context.user_data
+    doctor = d.get("doctor", {})
+    text   = (
         f"📋 <b>Проверьте данные записи:</b>\n\n"
-        f"🏥 Тип: {visit_label}\n"
-        f"🌆 Город: {city}\n"
-        f"🏨 Клиника: {clinic}\n"
+        f"🏥 Тип: {d.get('visit_label', '—')}\n"
+        f"🌆 Город: {d.get('city_name', 'Онлайн')}\n"
+        f"🏨 Клиника: {d.get('clinic_name', 'Онлайн')}\n"
         f"🩺 Специализация: {d.get('spec_name', '—')}\n"
         f"👨‍⚕️ Врач: {doctor.get('name', '—')}\n"
         f"💰 Стоимость: {doctor.get('price', '—')} ₽\n\n"
@@ -719,10 +627,11 @@ async def show_confirm(update, context):
     await edit_or_send(update, context, text, keyboard, parse_mode="HTML")
     return CONFIRM
 
+
 async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
@@ -732,14 +641,15 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return COLLECT_DATETIME
 
     if data == "confirm_yes":
-        user = query.from_user
-        d = context.user_data
-        doctor = d.get("doctor", {})
+        user     = query.from_user
+        d        = context.user_data
+        doctor   = d.get("doctor", {})
+        admin_id = int(get_settings().get("ADMIN_GROUP_ID", 0))
 
         msg = (
             f"🆕 <b>Новая запись на приём!</b>\n\n"
             f"🏥 Тип: {d.get('visit_label', '—')}\n"
-            f"🌆 Город: {d.get('city', 'Онлайн')}\n"
+            f"🌆 Город: {d.get('city_name', 'Онлайн')}\n"
             f"🏨 Клиника: {d.get('clinic_name', 'Онлайн')}\n"
             f"🩺 Специализация: {d.get('spec_name', '—')}\n"
             f"👨‍⚕️ Врач: {doctor.get('name', '—')}\n"
@@ -751,14 +661,19 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💬 Telegram: @{user.username or 'нет'} (ID: <code>{user.id}</code>)\n"
             f"✅ Статус: новая запись"
         )
-        await context.bot.send_message(ADMIN_GROUP_ID, msg, parse_mode="HTML")
+        await context.bot.send_message(admin_id, msg, parse_mode="HTML")
 
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Главное меню", callback_data="home")]])
-        await edit_or_send(update, context, 
-            "✅ <b>Ваша запись принята!</b>\n\n"
-            "Администратор свяжется с вами для подтверждения.\n\n"
-            "Спасибо, что выбрали АТС Клинику! 🏥",
-            keyboard, parse_mode="HTML")
+        bot_name = get_settings().get("BOT_NAME", "нашу клинику")
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🏠 Главное меню", callback_data="home")]]
+        )
+        await edit_or_send(
+            update, context,
+            f"✅ <b>Ваша запись принята!</b>\n\n"
+            f"Администратор свяжется с вами для подтверждения.\n\n"
+            f"Спасибо, что выбрали {bot_name}! 🏥",
+            keyboard, parse_mode="HTML"
+        )
         context.user_data.clear()
         return MAIN_MENU
 
@@ -767,16 +682,17 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========================
 
 async def show_specialties_for_question(update, context):
-    available_spec_ids = {d["spec_id"] for d in DOCTORS if d["question"]}
-    items = [(name, f"qspec_{sid}") for sid, name in SPECIALTIES if sid in available_spec_ids]
-    keyboard = make_inline_cols(items, cols=1)
+    available = {sid for d in get("doctors") if d["question"] for sid in d["spec_ids"]}
+    items     = [(s["name"], f"qspec_{s['id']}") for s in get("specialties") if s["id"] in available]
+    keyboard  = make_inline_cols(items)
     await edit_or_send(update, context, "💬 Выберите специализацию врача:", keyboard)
     return CHOOSE_SPECIALTY
+
 
 async def handle_question_specialty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
@@ -784,20 +700,22 @@ async def handle_question_specialty(update: Update, context: ContextTypes.DEFAUL
     if data == "back":
         return await show_main_menu(update, context)
 
-    spec_id = int(data.replace("qspec_", ""))
-    context.user_data["spec_id"] = spec_id
-    context.user_data["spec_name"] = SPEC_ID_TO_NAME.get(spec_id, "")
+    spec_id  = int(data.replace("qspec_", ""))
+    spec     = next((s for s in get("specialties") if s["id"] == spec_id), None)
+    context.user_data["spec_id"]   = spec_id
+    context.user_data["spec_name"] = spec["name"] if spec else ""
 
-    doctors = [d for d in DOCTORS if d["spec_id"] == spec_id and d["question"]]
-    items = [(f"👨‍⚕️ {d['name']}", f"qdoc_{d['id']}") for d in doctors]
-    keyboard = make_inline_cols(items, cols=1)
+    doctors  = [d for d in get("doctors") if spec_id in d["spec_ids"] and d["question"]]
+    items    = [(f"👨‍⚕️ {d['name']}", f"qdoc_{d['id']}") for d in doctors]
+    keyboard = make_inline_cols(items)
     await edit_or_send(update, context, "👨‍⚕️ Выберите врача:", keyboard)
     return CHOOSE_DOCTOR
+
 
 async def handle_question_doctor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
@@ -806,13 +724,16 @@ async def handle_question_doctor(update: Update, context: ContextTypes.DEFAULT_T
         return await show_specialties_for_question(update, context)
 
     doc_id = int(data.replace("qdoc_", ""))
-    doctor = next((d for d in DOCTORS if d["id"] == doc_id), None)
+    doctor = next((d for d in get("doctors") if d["id"] == doc_id), None)
     context.user_data["doctor"] = doctor
 
-    await edit_or_send(update, context, 
+    await edit_or_send(
+        update, context,
         f"✍️ Напишите ваш вопрос для врача <b>{doctor['name']}</b>:",
-        nav_keyboard(), parse_mode="HTML")
+        nav_keyboard(), parse_mode="HTML"
+    )
     return ASK_QUESTION_TEXT
+
 
 async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
@@ -826,22 +747,26 @@ async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_QUESTION_TEXT
 
     question = update.message.text.strip()
-    user = update.message.from_user
-    doctor = context.user_data.get("doctor", {})
+    user     = update.message.from_user
+    doctor   = context.user_data.get("doctor", {})
+    admin_id = int(get_settings().get("ADMIN_GROUP_ID", 0))
 
     msg = (
         f"❓ <b>Вопрос врачу</b>\n\n"
-        f"👨‍⚕️ Врач: {doctor.get('name', '—')}\n"
-        f"🩺 Специализация: {doctor.get('spec', '—')}\n\n"
+        f"👨‍⚕️ Врач: {doctor.get('name', '—')}\n\n"
         f"💬 Вопрос: {question}\n\n"
         f"👤 От: @{user.username or 'нет'} (ID: <code>{user.id}</code>)"
     )
-    await context.bot.send_message(ADMIN_GROUP_ID, msg, parse_mode="HTML")
+    await context.bot.send_message(admin_id, msg, parse_mode="HTML")
 
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Главное меню", callback_data="home")]])
-    await send_and_save(update, context,
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🏠 Главное меню", callback_data="home")]]
+    )
+    await send_and_save(
+        update, context,
         "✅ Ваш вопрос отправлен врачу!\n\nМы свяжемся с вами в ближайшее время.",
-        keyboard)
+        keyboard
+    )
     context.user_data.clear()
     return MAIN_MENU
 
@@ -850,16 +775,17 @@ async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========================
 
 async def show_specialties_for_callback(update, context):
-    available_spec_ids = {d["spec_id"] for d in DOCTORS if d["callback"]}
-    items = [(name, f"cbspec_{sid}") for sid, name in SPECIALTIES if sid in available_spec_ids]
-    keyboard = make_inline_cols(items, cols=1)
+    available = {sid for d in get("doctors") if d["callback"] for sid in d["spec_ids"]}
+    items     = [(s["name"], f"cbspec_{s['id']}") for s in get("specialties") if s["id"] in available]
+    keyboard  = make_inline_cols(items)
     await edit_or_send(update, context, "📞 Выберите специализацию:", keyboard)
     return CHOOSE_SPECIALTY
+
 
 async def handle_callback_specialty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
@@ -867,20 +793,22 @@ async def handle_callback_specialty(update: Update, context: ContextTypes.DEFAUL
     if data == "back":
         return await show_main_menu(update, context)
 
-    spec_id = int(data.replace("cbspec_", ""))
-    context.user_data["spec_id"] = spec_id
-    context.user_data["spec_name"] = SPEC_ID_TO_NAME.get(spec_id, "")
+    spec_id  = int(data.replace("cbspec_", ""))
+    spec     = next((s for s in get("specialties") if s["id"] == spec_id), None)
+    context.user_data["spec_id"]   = spec_id
+    context.user_data["spec_name"] = spec["name"] if spec else ""
 
-    doctors = [d for d in DOCTORS if d["spec_id"] == spec_id and d["callback"]]
-    items = [(f"👨‍⚕️ {d['name']}", f"cbdoc_{d['id']}") for d in doctors]
-    keyboard = make_inline_cols(items, cols=1)
+    doctors  = [d for d in get("doctors") if spec_id in d["spec_ids"] and d["callback"]]
+    items    = [(f"👨‍⚕️ {d['name']}", f"cbdoc_{d['id']}") for d in doctors]
+    keyboard = make_inline_cols(items)
     await edit_or_send(update, context, "👨‍⚕️ Выберите врача:", keyboard)
     return CHOOSE_DOCTOR
+
 
 async def handle_callback_doctor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data
 
     if data == "home":
         context.user_data.clear()
@@ -889,13 +817,12 @@ async def handle_callback_doctor(update: Update, context: ContextTypes.DEFAULT_T
         return await show_specialties_for_callback(update, context)
 
     doc_id = int(data.replace("cbdoc_", ""))
-    doctor = next((d for d in DOCTORS if d["id"] == doc_id), None)
+    doctor = next((d for d in get("doctors") if d["id"] == doc_id), None)
     context.user_data["doctor"] = doctor
 
-    await edit_or_send(update, context,
-        f"📝 Введите ваше ФИО для обратного звонка:",
-        nav_keyboard())
+    await edit_or_send(update, context, "📝 Введите ваше ФИО для обратного звонка:", nav_keyboard())
     return CALLBACK_NAME
+
 
 async def callback_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
@@ -912,6 +839,7 @@ async def callback_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_and_save(update, context, "📱 Введите ваш номер телефона:", nav_keyboard())
     return CALLBACK_PHONE
 
+
 async def callback_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -924,24 +852,28 @@ async def callback_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return CALLBACK_NAME
         return CALLBACK_PHONE
 
-    phone = update.message.text.strip()
-    user = update.message.from_user
-    doctor = context.user_data.get("doctor", {})
+    phone    = update.message.text.strip()
+    user     = update.message.from_user
+    doctor   = context.user_data.get("doctor", {})
+    admin_id = int(get_settings().get("ADMIN_GROUP_ID", 0))
 
     msg = (
         f"📞 <b>Запрос обратного звонка</b>\n\n"
-        f"👨‍⚕️ Врач: {doctor.get('name', '—')}\n"
-        f"🩺 Специализация: {doctor.get('spec', '—')}\n\n"
+        f"👨‍⚕️ Врач: {doctor.get('name', '—')}\n\n"
         f"👤 ФИО: {context.user_data.get('cb_name', '—')}\n"
         f"📱 Телефон: {phone}\n\n"
         f"💬 Telegram: @{user.username or 'нет'} (ID: <code>{user.id}</code>)"
     )
-    await context.bot.send_message(ADMIN_GROUP_ID, msg, parse_mode="HTML")
+    await context.bot.send_message(admin_id, msg, parse_mode="HTML")
 
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Главное меню", callback_data="home")]])
-    await send_and_save(update, context,
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🏠 Главное меню", callback_data="home")]]
+    )
+    await send_and_save(
+        update, context,
         "✅ Заявка на обратный звонок отправлена!\n\nМы перезвоним вам в ближайшее время.",
-        keyboard)
+        keyboard
+    )
     context.user_data.clear()
     return MAIN_MENU
 
@@ -950,7 +882,14 @@ async def callback_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========================
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Загружаем данные из таблицы перед стартом
+    reload_data()
+
+    bot_token = get_settings().get("BOT_TOKEN", "")
+    if not bot_token:
+        raise ValueError("BOT_TOKEN не найден в листе 'настройки'!")
+
+    app = Application.builder().token(bot_token).build()
 
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -959,16 +898,16 @@ def main():
             CHOOSE_CITY: [CallbackQueryHandler(handle_city)],
             CHOOSE_CLINIC: [CallbackQueryHandler(handle_clinic)],
             CHOOSE_SPECIALTY: [
-                CallbackQueryHandler(handle_specialty, pattern="^spec_"),
+                CallbackQueryHandler(handle_specialty,          pattern="^spec_"),
                 CallbackQueryHandler(handle_question_specialty, pattern="^qspec_"),
                 CallbackQueryHandler(handle_callback_specialty, pattern="^cbspec_"),
-                CallbackQueryHandler(handle_specialty, pattern="^(back|home)$"),
+                CallbackQueryHandler(handle_specialty,          pattern="^(back|home)$"),
             ],
             CHOOSE_DOCTOR: [
-                CallbackQueryHandler(handle_doctor, pattern="^doc_"),
+                CallbackQueryHandler(handle_doctor,          pattern="^doc_"),
                 CallbackQueryHandler(handle_question_doctor, pattern="^qdoc_"),
                 CallbackQueryHandler(handle_callback_doctor, pattern="^cbdoc_"),
-                CallbackQueryHandler(handle_doctor, pattern="^(back|home)$"),
+                CallbackQueryHandler(handle_doctor,          pattern="^(back|home)$"),
             ],
             CHOOSE_ACTION: [CallbackQueryHandler(handle_action)],
             COLLECT_NAME: [
@@ -1005,8 +944,11 @@ def main():
     )
 
     app.add_handler(conv)
+    app.add_handler(CommandHandler("reload", reload_command))
+
     print("✅ Бот запущен!")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
