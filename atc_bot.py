@@ -15,7 +15,7 @@ from telegram.ext import (
 
 # ID вашей Google Таблицы — берётся из ссылки:
 # https://docs.google.com/spreadsheets/d/  ВОТ_ЭТОТ_ID  /edit
-SPREADSHEET_ID = "ВАШ_SPREADSHEET_ID_ЗДЕСЬ"
+SPREADSHEET_ID = "1CxGkQAFbCnk3QO00zQr-HQyW95heLoVBDpmlccGXnJY"
 
 # ========================
 # ЗАГРУЗКА ДАННЫХ ИЗ GOOGLE SHEETS
