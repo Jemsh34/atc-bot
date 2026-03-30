@@ -1,4 +1,6 @@
 import logging
+import os
+import json
 import gspread
 from google.oauth2.service_account import Credentials
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -13,10 +15,7 @@ from telegram.ext import (
 
 # ID вашей Google Таблицы — берётся из ссылки:
 # https://docs.google.com/spreadsheets/d/  ВОТ_ЭТОТ_ID  /edit
-SPREADSHEET_ID = "1CxGkQAFbCnk3QO00zQr-HQyW95heLoVBDpmlccGXnJY"
-
-# Путь к JSON-файлу сервисного аккаунта Google (лежит рядом с ботом)
-SERVICE_ACCOUNT_FILE = "service_account.json"
+SPREADSHEET_ID = "ВАШ_SPREADSHEET_ID_ЗДЕСЬ"
 
 # ========================
 # ЗАГРУЗКА ДАННЫХ ИЗ GOOGLE SHEETS
@@ -27,7 +26,14 @@ def get_sheet_client():
         "https://www.googleapis.com/auth/spreadsheets.readonly",
         "https://www.googleapis.com/auth/drive.readonly",
     ]
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+    # Сначала пробуем переменную окружения GOOGLE_CREDENTIALS (для Railway)
+    # Если её нет — читаем локальный файл service_account.json (для локального запуска)
+    google_creds_env = os.environ.get("GOOGLE_CREDENTIALS")
+    if google_creds_env:
+        creds_info = json.loads(google_creds_env)
+        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    else:
+        creds = Credentials.from_service_account_file("service_account.json", scopes=scopes)
     return gspread.authorize(creds)
 
 
