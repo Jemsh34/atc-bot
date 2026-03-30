@@ -30,6 +30,7 @@ def get_sheet_client():
     # Если её нет — читаем локальный файл service_account.json (для локального запуска)
     google_creds_env = os.environ.get("GOOGLE_CREDENTIALS")
     if google_creds_env:
+        google_creds_env = google_creds_env.replace("\n", "\\n")
         creds_info = json.loads(google_creds_env)
         creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     else:
